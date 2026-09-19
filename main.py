@@ -8,13 +8,23 @@ from mysql.connector import Error
 def _connection_kwargs_from_database_url(database_url):
     """Parse a DATABASE_URL (e.g. mysql://user:pass@host:port/dbname) into connect() kwargs."""
     parsed = urlparse(database_url)
-    return {
+    kwargs = {
         "host": parsed.hostname,
         "user": parsed.username,
         "password": parsed.password,
         "database": parsed.path.lstrip("/") or None,
         "port": parsed.port or 3306,
     }
+    query = dict(pair.split("=", 1) for pair in parsed.query.split("&") if "=" in pair) if parsed.query else {}
+    if query.get("ssl", "").lower() in ("true", "1", "required") or query.get("ssl-mode", "").upper() in ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"):
+        ca = query.get("sslca") or query.get("ssl-ca") or os.getenv("MYSQL_SSL_CA")
+        if ca:
+            kwargs["ssl_ca"] = ca
+        else:
+            kwargs["ssl_disabled"] = False
+    elif query.get("ssl", "").lower() in ("false", "0", "disabled"):
+        kwargs["ssl_disabled"] = True
+    return kwargs
 
 
 def create_connection():

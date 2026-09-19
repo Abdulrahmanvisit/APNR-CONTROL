@@ -1,7 +1,7 @@
 import csv
 import io
+import logging
 import os
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -9,6 +9,8 @@ from functools import wraps
 import mysql.connector
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from auth_security import hash_password, verify_password
 from werkzeug.utils import secure_filename
 
@@ -21,14 +23,31 @@ from rbac import has_permission
 load_dotenv()
 
 app = Flask(__name__)
+
+_secret_key = os.getenv("FLASK_SECRET_KEY")
+if not _secret_key:
+    logging.warning(
+        "FLASK_SECRET_KEY is not set. Sessions will not survive a server restart. "
+        "Set FLASK_SECRET_KEY in your environment or .env file "
+        "(generate with: openssl rand -hex 32)."
+    )
+
 app.config.update(
-    SECRET_KEY=os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32)),
+    SECRET_KEY=_secret_key or os.urandom(32),
     MAX_CONTENT_LENGTH=5 * 1024 * 1024,
     UPLOAD_FOLDER=os.path.join(app.root_path, "static", "uploads"),
-    PERMANENT_SESSION_LIFETIME=timedelta(minutes=15),
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("FLASK_COOKIE_SECURE", "0") == "1",
+    SESSION_REFRESH_EACH_REQUEST=True,
+    PREFERRED_URL_SCHEME="https" if os.getenv("FLASK_COOKIE_SECURE", "0") == "1" else "http",
+)
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per hour", "50 per minute"],
 )
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 WATCHLIST_CATEGORIES = {"Allowed", "Blocked", "Visitor"}
@@ -192,6 +211,7 @@ def auditor_dashboard():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def login():
     """Authenticate a user against the users table."""
     if request.method == "POST":
