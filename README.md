@@ -120,6 +120,96 @@ Role workspaces:
 
 The legacy `/dashboard` route redirects to the correct role workspace.
 
+## Deploy on Railway
+
+This repository is configured for deployment on Railway with zero-config build
+support. Railway's Nixpacks buildpack detects the `Procfile`, `requirements.txt`,
+`runtime.txt`, and `Aptfile` at the repository root.
+
+### Prerequisites
+
+Add a **MySQL** plugin to your Railway project. Railway injects the connection
+details automatically as:
+
+```text
+DATABASE_URL=mysql://user:password@host:port/database
+MYSQL_HOST  /  MYSQL_USER  /  MYSQL_PASSWORD  /  MYSQL_DATABASE  /  MYSQL_PORT
+```
+
+The application resolves these in priority order: `DATABASE_URL` first, then
+`MYSQL_*`, then the legacy `APNR_DB_*` variables.
+
+### Build & Runtime
+
+| File            | Purpose                                                     |
+|-----------------|--------------------------------------------------------------|
+| `Procfile`      | `web: gunicorn app:app --bind 0.0.0.0:$PORT ...`              |
+| `requirements.txt` | Python dependencies (`opencv-python-headless` for servers) |
+| `runtime.txt`   | Python 3.11                                                    |
+| `Aptfile`       | Installs the `tesseract-ocr` system package                    |
+
+### Environment Variables
+
+Set these in the Railway dashboard (Settings → Variables):
+
+| Variable            | Value / Notes                                   |
+|---------------------|-------------------------------------------------|
+| `FLASK_SECRET_KEY`  | A long random string (generate one)             |
+| `FLASK_COOKIE_SECURE` | `1` (HTTPS on Railway)                          |
+| `TESSERACT_CMD`     | `/usr/bin/tesseract` (installed via `Aptfile`)  |
+
+The database variables (`DATABASE_URL`, `MYSQL_*`) are injected automatically
+when you add the MySQL plugin.
+
+### Deployment Steps
+
+1. Push this repository to GitHub.
+2. In Railway, create a new project from your GitHub repository.
+3. Add the **MySQL** plugin (Railway → New → Plugin → MySQL).
+4. Set the environment variables listed above as secrets.
+5. Deploy. Railway builds the image, installs Python + system packages, and
+   starts Gunicorn on the allocated `$PORT`.
+6. Once the health check passes, provision the first Admin account by running
+   `manage_users.py` against the remote database:
+
+```bash
+python manage_users.py academy_admin --role Admin
+```
+
+The application URL will be supplied by Railway after the first successful
+deployment.
+
+### Deploy on Render
+
+The repository includes [render.yaml](render.yaml) for a Render web service. It uses Gunicorn, installs Tesseract OCR during the build, binds Flask to Render's `$PORT`, and keeps secrets in Render environment variables.
+
+Render does not provide the MySQL database required by this application as part of this blueprint. Create or use an external MySQL-compatible database, then connect it with these Render environment variables:
+
+```text
+APNR_DB_HOST
+APNR_DB_PORT
+APNR_DB_NAME
+APNR_DB_USER
+APNR_DB_PASSWORD
+```
+
+Deployment steps:
+
+1. Push this repository to GitHub.
+2. In Render, choose **New > Blueprint** and select the repository.
+3. Review the service generated from `render.yaml`.
+4. Enter the external MySQL connection values as secret environment variables.
+5. Deploy the service and wait for the `/login` health check to pass.
+6. Provision the first Admin account from a secure local database connection:
+
+```powershell
+.\venv\Scripts\python.exe manage_users.py academy_admin --role Admin
+```
+
+For a remote Render database, run the same provisioning command only after setting the Render database variables in a secure local environment. Do not put passwords or database credentials in `render.yaml` or Git.
+
+The deployed application URL will be supplied by Render after the first successful deployment.
+
 ## Role Permissions
 
 | Capability | Admin | Supervisor | Operator | Auditor |
@@ -181,6 +271,10 @@ auth_security.py               Argon2id hashing and legacy hash migration
 manage_users.py                Secure command-line account provisioning
 templates/                     Role dashboards and application views
 static/css/style.css           Bootstrap-aligned design system
+Procfile                       Gunicorn start command for Railway / Render
+runtime.txt                    Python 3.11 runtime pin
+Aptfile                        System package: tesseract-ocr
+render.yaml                    Render deployment blueprint
 CHAPTER_3_SYSTEM_DESIGN_BLUEPRINT.md  Academic methodology and design
 HARDWARE_INTEGRATION.md        Buzzer and relay integration guide
 test_*.py                      Automated tests

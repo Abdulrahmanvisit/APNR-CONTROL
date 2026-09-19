@@ -3,6 +3,12 @@ venv/
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Local Environment Variables & Secrets
 .env
@@ -16,7 +22,15 @@ images/uploads/*
 static/uploads/*
 !static/uploads/.gitkeep
 
-# IDE / Testing
+# Testing & Coverage
 .pytest_cache/
+coverage.xml
+htmlcov/
+.tox/
+
+# IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~

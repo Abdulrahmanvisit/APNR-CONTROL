@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: apnr-control-center
+    runtime: python
+    buildCommand: apt-get update && apt-get install -y tesseract-ocr && pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /login
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: FLASK_COOKIE_SECURE
+        value: "1"
+      - key: TESSERACT_CMD
+        value: /usr/bin/tesseract
+      - key: APNR_DB_HOST
+        sync: false
+      - key: APNR_DB_PORT
+        value: "3306"
+      - key: APNR_DB_NAME
+        sync: false
+      - key: APNR_DB_USER
+        sync: false
+      - key: APNR_DB_PASSWORD
+        sync: false

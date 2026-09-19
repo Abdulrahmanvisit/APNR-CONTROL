@@ -1,9 +1,10 @@
 mysql-connector-python>=9.0,<10
 Flask>=3.0.0
+gunicorn>=23.0.0
 argon2-cffi>=23.1.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
-opencv-python>=4.10.0
+opencv-python-headless>=4.10.0
 pytesseract>=0.3.13
 Pillow>=10.0.0
 numpy>=2.0.0
