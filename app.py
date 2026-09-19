@@ -7,6 +7,13 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import mysql.connector
+try:
+    import pg8000
+    DB_ERRORS = (mysql.connector.Error, pg8000.Error)
+    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError, pg8000.IntegrityError)
+except ImportError:
+    DB_ERRORS = (mysql.connector.Error,)
+    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError,)
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 from flask_limiter import Limiter
@@ -119,13 +126,13 @@ def close_database(connection, cursor=None):
     if cursor is not None:
         try:
             cursor.close()
-        except mysql.connector.Error:
+        except DB_ERRORS:
             pass
     if connection is not None:
         try:
             if connection.is_connected():
                 connection.close()
-        except mysql.connector.Error:
+        except DB_ERRORS:
             pass
 
 
@@ -137,7 +144,7 @@ def query_rows(query, params=()):
         cursor = connection.cursor(dictionary=True)
         cursor.execute(query, params)
         return cursor.fetchall()
-    except mysql.connector.Error:
+    except DB_ERRORS:
         return []
     finally:
         close_database(connection, cursor)
@@ -172,14 +179,55 @@ def _seed_admin_if_absent():
             f"Auto-provisioned admin user '{admin_username}' with default password. "
             f"Change immediately via /account/reset-password after first login."
         )
-    except mysql.connector.Error:
+    except DB_ERRORS:
         if connection is not None:
             connection.rollback()
     finally:
         close_database(connection, cursor)
 
 
-@app.after_request
+@app.route("/health")
+def health_check():
+    """Diagnostics endpoint: database connectivity, schema status, admin user."""
+    from main import create_connection
+    db_status = "unavailable"
+    user_count = 0
+    admin_exists = False
+    try:
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        user_count = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'Admin'"
+        )
+        admin_exists = cursor.fetchone()[0] > 0
+        db_status = "connected"
+        cursor.close()
+        conn.close()
+    except Exception as error:
+        db_status = f"error: {error}"
+
+    return {
+        "status": "ok" if db_status == "connected" else "error",
+        "database": db_status,
+        "users_count": user_count,
+        "admin_exists": admin_exists,
+        "secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
+        "tesseract_cmd": os.getenv("TESSERACT_CMD", "not set"),
+        "admin_credentials": (
+            f"username={os.getenv('ADMIN_USERNAME', 'admin')} "
+            f"password={os.getenv('ADMIN_PASSWORD', 'ChangeMe123456')}"
+            if user_count == 0 else "users exist - run manage_users.py"
+        ) if db_status == "connected" else "no database",
+    }
+
+
+@app.route("/health/text")
+def health_text():
+    """Human-readable health check (for Render health check path)."""
+    data = health_check()
+    return ("OK" if data["status"] == "ok" else "ERROR"), 200
 
 
 @app.after_request
@@ -328,7 +376,7 @@ def reset_password():
             session["is_first_login"] = False
             flash("Your password was updated successfully.", "success")
             return redirect(role_dashboard_url(session.get("role")))
-        except mysql.connector.Error:
+        except DB_ERRORS:
             if connection is not None:
                 connection.rollback()
             flash("The password could not be updated.", "error")
@@ -413,11 +461,11 @@ def scan():
             ),
         )
         connection.commit()
-    except mysql.connector.Error:
+    except DB_ERRORS:
         if connection is not None:
             try:
                 connection.rollback()
-            except mysql.connector.Error:
+            except DB_ERRORS:
                 app.logger.exception("Unable to roll back detection log transaction")
         flash("The scan completed, but its log could not be saved.", "error")
     finally:
@@ -459,11 +507,11 @@ def add_watchlist():
         )
         connection.commit()
         flash(f"Plate {plate_number} added to the watchlist.", "success")
-    except mysql.connector.IntegrityError:
+    except DB_INTEGRITY_ERRORS:
         if connection is not None:
             connection.rollback()
         flash(f"Plate {plate_number} is already registered.", "error")
-    except mysql.connector.Error:
+    except DB_ERRORS:
         if connection is not None:
             connection.rollback()
         flash("The watchlist entry could not be saved.", "error")
@@ -495,7 +543,7 @@ def edit_watchlist(plate_number):
         else:
             connection.commit()
             flash(f"Plate {normalized_plate} was updated.", "success")
-    except mysql.connector.Error:
+    except DB_ERRORS:
         if connection is not None:
             connection.rollback()
         flash("The watchlist entry could not be updated.", "error")
@@ -519,7 +567,7 @@ def delete_watchlist(plate_number):
         else:
             connection.commit()
             flash(f"Plate {normalized_plate} was removed from the watchlist.", "success")
-    except mysql.connector.Error:
+    except DB_ERRORS:
         if connection is not None:
             connection.rollback()
         flash("The watchlist entry could not be removed.", "error")
@@ -552,11 +600,11 @@ def manage_users():
             )
             connection.commit()
             flash(f"Account {username} was created.", "success")
-        except mysql.connector.IntegrityError:
+        except DB_INTEGRITY_ERRORS:
             if connection is not None:
                 connection.rollback()
             flash("That username is already in use.", "error")
-        except mysql.connector.Error:
+        except DB_ERRORS:
             if connection is not None:
                 connection.rollback()
             flash("The account could not be created.", "error")
