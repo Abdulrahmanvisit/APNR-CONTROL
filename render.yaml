@@ -5,6 +5,8 @@ services:
     buildCommand: apt-get update && apt-get install -y tesseract-ocr && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
     healthCheckPath: /health/text
+    addons:
+      - apnr-db
     envVars:
       - key: FLASK_SECRET_KEY
         generateValue: true
@@ -21,10 +23,6 @@ services:
       - key: FLASK_DEBUG
         value: "0"
 
-# Attach a PostgreSQL add-on in the Render dashboard:
-#   New → Add-on → PostgreSQL → Create
-# Render auto-injects DATABASE_URL as a postgres:// URL
-# The app auto-detects and supports both PostgreSQL and MySQL via DATABASE_URL
-
-# For external MySQL connections, set these manually:
-#   APNR_DB_HOST, APNR_DB_PORT, APNR_DB_NAME, APNR_DB_USER, APNR_DB_PASSWORD
+databases:
+  - name: apnr-db
+    postgresVersion: "16"
