@@ -145,10 +145,36 @@ def query_rows(query, params=()):
 
 @app.before_request
 def initialize_application_schema():
-    """Ensure the application tables exist without creating predictable accounts."""
+    """Ensure the application tables exist and an admin account is provisioned on first startup."""
     if not app.config.get("USERS_SEEDED"):
         initialize_schema()
+        _seed_admin_if_absent()
         app.config["USERS_SEEDED"] = True
+
+
+def _seed_admin_if_absent():
+    """Create a default admin account from env vars if no users exist yet."""
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    if not admin_password:
+        return
+    rows = query_rows("SELECT COUNT(*) AS cnt FROM users")
+    if rows and rows[0]["cnt"] > 0:
+        return
+    connection = cursor = None
+    try:
+        connection = create_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "INSERT INTO users (username, password, role, is_first_login) VALUES (%s, %s, %s, TRUE)",
+            (admin_username, hash_password(admin_password), "Admin"),
+        )
+        connection.commit()
+    except mysql.connector.Error:
+        if connection is not None:
+            connection.rollback()
+    finally:
+        close_database(connection, cursor)
 
 
 @app.after_request

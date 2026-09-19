@@ -12,6 +12,12 @@ services:
         value: "1"
       - key: TESSERACT_CMD
         value: /usr/bin/tesseract
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        value: ChangeMe123456
+      - key: FLASK_DEBUG
+        value: "0"
       - key: APNR_DB_HOST
         sync: false
       - key: APNR_DB_PORT
