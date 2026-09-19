@@ -1,0 +1,22 @@
+# Virtual environment & Python cache
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local Environment Variables & Secrets
+.env
+
+# Logs and Uploaded Images
+logs/*.log
+!logs/.gitkeep
+flask-server*.log
+images/uploads/*
+!images/.gitkeep
+static/uploads/*
+!static/uploads/.gitkeep
+
+# IDE / Testing
+.pytest_cache/
+.vscode/
+.idea/
