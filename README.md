@@ -63,12 +63,19 @@ Create a local `.env` file from `.env.example` and set the database connection:
 ```env
 FLASK_SECRET_KEY=replace-with-a-long-random-secret
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
-APNR_DB_HOST=127.0.0.1
-APNR_DB_PORT=3306
-APNR_DB_NAME=apnr_db
-APNR_DB_USER=root
-APNR_DB_PASSWORD=your-local-database-password
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=apnr_db
+MYSQL_USER=root
+MYSQL_PASSWORD=your-local-database-password
 ```
+
+When deploying on Railway, link a MySQL service to this app. Railway injects
+`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`,
+and `DATABASE_URL` automatically, pointing at the MySQL service's private
+network hostname instead of `localhost`. If `DATABASE_URL` is present, it is
+used directly; otherwise the individual `MYSQL_*` variables are used. The
+legacy `APNR_DB_*` variable names are still supported as a fallback.
 
 Do not commit `.env`, database passwords, uploaded images, or logs.
 
