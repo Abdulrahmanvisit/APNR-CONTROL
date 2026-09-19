@@ -135,16 +135,13 @@ support. Railway's Nixpacks buildpack detects the `Procfile`, `requirements.txt`
 
 ### Prerequisites
 
-Add a **MySQL** plugin to your Railway project. Railway injects the connection
-details automatically as:
+Add a **MySQL** or **PostgreSQL** plugin to your Railway project. Railway injects the connection details automatically as:
 
 ```text
-DATABASE_URL=mysql://user:password@host:port/database
-MYSQL_HOST  /  MYSQL_USER  /  MYSQL_PASSWORD  /  MYSQL_DATABASE  /  MYSQL_PORT
+DATABASE_URL=mysql://user:password@host:port/database  (or postgres://...)
 ```
 
-The application resolves these in priority order: `DATABASE_URL` first, then
-`MYSQL_*`, then the legacy `APNR_DB_*` variables.
+The application supports both MySQL and PostgreSQL via `DATABASE_URL`. It resolves connection details in priority order: `DATABASE_URL` first, then `MYSQL_*`/`PG*` vars, then legacy `APNR_DB_*` variables.
 
 ### Build & Runtime
 
@@ -154,6 +151,7 @@ The application resolves these in priority order: `DATABASE_URL` first, then
 | `requirements.txt` | Python dependencies (`opencv-python-headless` for servers) |
 | `runtime.txt`   | Python 3.11                                                    |
 | `Aptfile`       | Installs the `tesseract-ocr` system package                    |
+| `render.yaml`   | Render deployment blueprint (PostgreSQL-compatible)              |
 
 ### Environment Variables
 
@@ -164,49 +162,43 @@ Set these in the Railway dashboard (Settings → Variables):
 | `FLASK_SECRET_KEY`  | A long random string (generate one)             |
 | `FLASK_COOKIE_SECURE` | `1` (HTTPS on Railway)                          |
 | `TESSERACT_CMD`     | `/usr/bin/tesseract` (installed via `Aptfile`)  |
+| `ADMIN_USERNAME`    | `admin` (for auto-provisioning on first startup) |
+| `ADMIN_PASSWORD`    | A secure password (for auto-provisioning)       |
 
-The database variables (`DATABASE_URL`, `MYSQL_*`) are injected automatically
-when you add the MySQL plugin.
+The database variable (`DATABASE_URL`) is injected automatically when you add a MySQL or PostgreSQL plugin.
+
+### Auto-Provisioning
+
+On the **first request** after deployment, if no users exist in the database, the application automatically creates an Admin account using `ADMIN_USERNAME` and `ADMIN_PASSWORD`. After logging in, you'll be redirected to `/account/reset-password` to set a permanent password.
 
 ### Deployment Steps
 
 1. Push this repository to GitHub.
 2. In Railway, create a new project from your GitHub repository.
-3. Add the **MySQL** plugin (Railway → New → Plugin → MySQL).
+3. Add a **MySQL** or **PostgreSQL** plugin (Railway → New → Plugin).
 4. Set the environment variables listed above as secrets.
 5. Deploy. Railway builds the image, installs Python + system packages, and
    starts Gunicorn on the allocated `$PORT`.
-6. Once the health check passes, provision the first Admin account by running
-   `manage_users.py` against the remote database:
+6. Visit the health check at `/health` to verify the database connection.
+7. Access the app URL and log in with the auto-provisioned Admin credentials.
 
-```bash
-python manage_users.py academy_admin --role Admin
-```
-
-The application URL will be supplied by Railway after the first successful
-deployment.
+The application URL will be supplied by Railway after the first successful deployment.
 
 ### Deploy on Render
 
-The repository includes [render.yaml](render.yaml) for a Render web service. It uses Gunicorn, installs Tesseract OCR during the build, binds Flask to Render's `$PORT`, and keeps secrets in Render environment variables.
+The repository includes [render.yaml](render.yaml) for a Render web service. It uses Gunicorn, installs Tesseract OCR during the build, binds Flask to Render's `$PORT`, and supports both PostgreSQL and MySQL databases.
 
-Render does not provide the MySQL database required by this application as part of this blueprint. Create or use an external MySQL-compatible database, then connect it with these Render environment variables:
-
-```text
-APNR_DB_HOST
-APNR_DB_PORT
-APNR_DB_NAME
-APNR_DB_USER
-APNR_DB_PASSWORD
-```
+**Add a PostgreSQL plugin** (Render → New → Add-on → PostgreSQL). Render auto-injects `DATABASE_URL` as a `postgres://` URL. The application auto-provisions an Admin account on first startup using the `ADMIN_USERNAME` and `ADMIN_PASSWORD` variables configured in `render.yaml`.
 
 Deployment steps:
 
 1. Push this repository to GitHub.
 2. In Render, choose **New > Blueprint** and select the repository.
 3. Review the service generated from `render.yaml`.
-4. Enter the external MySQL connection values as secret environment variables.
-5. Deploy the service and wait for the `/login` health check to pass.
+4. Add a **PostgreSQL** plugin and link it to the service.
+5. Override `ADMIN_PASSWORD` and `FLASK_SECRET_KEY` as secret environment variables.
+6. Deploy the service and wait for the `/health/text` health check to pass.
+7. Log in with `admin` / `ChangeMe123456` (the auto-provisioned credentials).
 6. Provision the first Admin account from a secure local database connection:
 
 ```powershell
