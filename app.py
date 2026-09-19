@@ -155,9 +155,7 @@ def initialize_application_schema():
 def _seed_admin_if_absent():
     """Create a default admin account from env vars if no users exist yet."""
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("ADMIN_PASSWORD")
-    if not admin_password:
-        return
+    admin_password = os.getenv("ADMIN_PASSWORD", "ChangeMe123456")
     rows = query_rows("SELECT COUNT(*) AS cnt FROM users")
     if rows and rows[0]["cnt"] > 0:
         return
@@ -170,11 +168,18 @@ def _seed_admin_if_absent():
             (admin_username, hash_password(admin_password), "Admin"),
         )
         connection.commit()
+        app.logger.warning(
+            f"Auto-provisioned admin user '{admin_username}' with default password. "
+            f"Change immediately via /account/reset-password after first login."
+        )
     except mysql.connector.Error:
         if connection is not None:
             connection.rollback()
     finally:
         close_database(connection, cursor)
+
+
+@app.after_request
 
 
 @app.after_request
