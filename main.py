@@ -1,21 +1,52 @@
 import os
+from urllib.parse import urlparse
 
 import mysql.connector
 from mysql.connector import Error
 
 
+def _connection_kwargs_from_database_url(database_url):
+    """Parse a DATABASE_URL (e.g. mysql://user:pass@host:port/dbname) into connect() kwargs."""
+    parsed = urlparse(database_url)
+    return {
+        "host": parsed.hostname,
+        "user": parsed.username,
+        "password": parsed.password,
+        "database": parsed.path.lstrip("/") or None,
+        "port": parsed.port or 3306,
+    }
+
+
 def create_connection():
-    """Create and return a connection to the APNR MySQL database."""
+    """Create and return a connection to the APNR MySQL database.
+
+    Connection details are resolved in this order:
+    1. DATABASE_URL, if provided (e.g. by Railway), is parsed directly.
+    2. The MYSQL_* environment variables provided by a Railway MySQL service.
+    3. The legacy APNR_DB_* environment variables, for local development.
+    4. Sensible localhost defaults, for local development without any env vars.
+    """
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        kwargs = _connection_kwargs_from_database_url(database_url)
+        return mysql.connector.connect(**kwargs)
+
+    host = os.getenv("MYSQL_HOST", os.getenv("APNR_DB_HOST", "127.0.0.1"))
+    user = os.getenv("MYSQL_USER", os.getenv("APNR_DB_USER", "root"))
+    password = os.getenv("MYSQL_PASSWORD", os.getenv("APNR_DB_PASSWORD", "root1234"))
+    database = os.getenv("MYSQL_DATABASE", os.getenv("APNR_DB_NAME", "apnr_db"))
+    raw_port = os.getenv("MYSQL_PORT", os.getenv("APNR_DB_PORT", "3306"))
+
     try:
-        port = int(os.getenv("APNR_DB_PORT", "3306"))
+        port = int(raw_port)
     except ValueError as error:
-        raise ValueError("APNR_DB_PORT must be an integer") from error
+        raise ValueError("MYSQL_PORT (or APNR_DB_PORT) must be an integer") from error
 
     return mysql.connector.connect(
-        host=os.getenv("APNR_DB_HOST", "127.0.0.1"),
-        user=os.getenv("APNR_DB_USER", "root"),
-        password=os.getenv("APNR_DB_PASSWORD", "root1234"),
-        database=os.getenv("APNR_DB_NAME", "apnr_db"),
+        host=host,
+        user=user,
+        password=password,
+        database=database,
         port=port,
     )
 
