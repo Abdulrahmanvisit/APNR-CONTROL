@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from urllib.parse import urlparse
 
 import mysql.connector
@@ -42,8 +43,49 @@ class PgDictCursor:
         return getattr(self._cursor, name)
 
 
+class SqliteDictCursor:
+    """Wrap a sqlite3 cursor to accept %s-style params and yield dict rows."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+    def _convert_query(self, query):
+        return query.replace("%s", "?")
+
+    def execute(self, query, params=()):
+        converted = self._convert_query(query)
+        return self._cursor.execute(converted, params)
+
+    def fetchall(self):
+        if self._cursor.description is None:
+            return []
+        columns = [col[0] for col in self._cursor.description]
+        return [dict(zip(columns, row)) for row in self._cursor.fetchall()]
+
+    def fetchone(self):
+        if self._cursor.description is None:
+            return None
+        columns = [col[0] for col in self._cursor.description]
+        row = self._cursor.fetchone()
+        return dict(zip(columns, row)) if row else None
+
+    def close(self):
+        self._cursor.close()
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
 class DatabaseConnection:
-    """Unified wrapper for MySQL and PostgreSQL connections."""
+    """Unified wrapper for MySQL, PostgreSQL, and SQLite connections."""
 
     def __init__(self, conn, db_type):
         self._conn = conn
@@ -59,12 +101,18 @@ class DatabaseConnection:
         if self._db_type == "postgresql":
             import pg8000
             return pg8000.Error
+        if self._db_type == "sqlite":
+            return sqlite3.Error
         return MySQLError
 
     def cursor(self, dictionary=False):
         if self._db_type == "postgresql":
             cursor = self._conn.cursor()
             return PgDictCursor(cursor) if dictionary else cursor
+        if self._db_type == "sqlite":
+            cursor = self._conn.cursor()
+            # Always wrap SQLite cursors to convert %s params to ? style
+            return SqliteDictCursor(cursor)
         return self._conn.cursor(dictionary=dictionary)
 
     def commit(self):
@@ -77,6 +125,8 @@ class DatabaseConnection:
         self._conn.close()
 
     def is_connected(self):
+        if self._db_type == "sqlite":
+            return True
         if self._db_type == "postgresql":
             return not self._conn.isclosed if hasattr(self._conn, "isclosed") else True
         return self._conn.is_connected()
@@ -90,11 +140,20 @@ def _detect_db_type(database_url=""):
             return "postgresql"
         if lowered.startswith("mysql://") or lowered.startswith("mysql://"):
             return "mysql"
+        if lowered.startswith("sqlite://") or lowered.startswith("sqlite:///"):
+            return "sqlite"
     return os.getenv("DB_TYPE", "mysql")
 
 
 def _connection_kwargs_from_database_url(database_url):
-    """Parse a DATABASE_URL into connect() kwargs for either MySQL or PostgreSQL."""
+    """Parse a DATABASE_URL into connect() kwargs for either MySQL, PostgreSQL, or SQLite."""
+    lowered = database_url.lower()
+    if lowered.startswith("sqlite://") or lowered.startswith("sqlite:///"):
+        path = database_url[lowered.index("sqlite://") + len("sqlite://"):]
+        if path.startswith("/"):
+            path = path[1:]
+        return {"path": path or "apnr_local.db"}, "sqlite"
+
     parsed = urlparse(database_url)
     kwargs = {
         "host": parsed.hostname,
@@ -129,10 +188,11 @@ def create_connection():
     """Create and return a connection to the APNR database.
 
     Connection details are resolved in this order:
-    1. DATABASE_URL (auto-injected by Railway/Render), supports mysql:// and postgres://
+    1. DATABASE_URL (auto-injected by Railway/Render), supports mysql://, postgres://, sqlite://
     2. MYSQL_* env vars (Railway MySQL plugin), or PG* vars (Render PostgreSQL)
     3. Legacy APNR_DB_* env vars (local development)
-    4. Sensible localhost defaults
+    4. SQLite fallback (local file-based database in the application directory)
+    5. Sensible MySQL localhost defaults
     """
     database_url = os.getenv("DATABASE_URL")
     if database_url:
@@ -141,25 +201,50 @@ def create_connection():
             import pg8000
             conn = pg8000.connect(**kwargs)
             return DatabaseConnection(conn, "postgresql")
+        if db_type == "sqlite":
+            conn = sqlite3.connect(_sqlite_path(kwargs.get("path", "apnr_local.db")))
+            return DatabaseConnection(conn, "sqlite")
         conn = mysql.connector.connect(**kwargs)
         return DatabaseConnection(conn, "mysql")
 
-    # Detect PostgreSQL vs MySQL from env
-    if os.getenv("DATABASE_URL", "").startswith(("postgres", "postgresql")):
+    # Detect PostgreSQL vs MySQL vs SQLite from env
+    db_type = os.getenv("DB_TYPE", "mysql")
+    if db_type == "sqlite" or (os.getenv("DATABASE_URL", "").startswith(("sqlite",))):
+        db_type = "sqlite"
+    elif db_type == "postgresql" or (os.getenv("DATABASE_URL", "").startswith(("postgres", "postgresql"))):
         db_type = "postgresql"
     else:
-        db_type = os.getenv("DB_TYPE", "mysql")
+        db_type = "mysql"
 
-    if db_type == "postgresql":
-        import pg8000
-        conn = pg8000.connect(
-            host=os.getenv("PGHOST", os.getenv("MYSQL_HOST", os.getenv("APNR_DB_HOST", "127.0.0.1"))),
-            user=os.getenv("PGUSER", os.getenv("MYSQL_USER", os.getenv("APNR_DB_USER", "postgres"))),
-            password=os.getenv("PGPASSWORD", os.getenv("MYSQL_PASSWORD", os.getenv("APNR_DB_PASSWORD", ""))),
-            database=os.getenv("PGDATABASE", os.getenv("MYSQL_DATABASE", os.getenv("APNR_DB_NAME", "postgres"))),
-            port=int(os.getenv("PGPORT", os.getenv("MYSQL_PORT", os.getenv("APNR_DB_PORT", "5432")))),
-        )
-        return DatabaseConnection(conn, "postgresql")
+    # SQLite fallback when no external database env vars are configured.
+    # This lets the app run (with login + auto-provisioning) inside containers
+    # like Render without a database add-on attached yet.
+    _has_external = bool(
+        os.getenv("MYSQL_HOST") or os.getenv("APNR_DB_HOST") or os.getenv("PGHOST")
+    )
+    if db_type == "sqlite" or (db_type == "mysql" and not _has_external):
+        # Try local defaults MySQL first (useful for local dev with a running MySQL)
+        if db_type == "mysql" and _has_external is False:
+            host = os.getenv("MYSQL_HOST", os.getenv("APNR_DB_HOST", "127.0.0.1"))
+            try:
+                test_conn = mysql.connector.connect(
+                    host=host,
+                    user=os.getenv("MYSQL_USER", os.getenv("APNR_DB_USER", "root")),
+                    password=os.getenv("MYSQL_PASSWORD", os.getenv("APNR_DB_PASSWORD", "root1234")),
+                    database=os.getenv("MYSQL_DATABASE", os.getenv("APNR_DB_NAME", "apnr_db")),
+                    port=int(os.getenv("MYSQL_PORT", os.getenv("APNR_DB_PORT", "3306"))),
+                    connection_timeout=3,
+                )
+                test_conn.close()
+                # MySQL is available — fall through to MySQL path below
+            except Exception:
+                # MySQL unavailable — use SQLite fallback
+                conn = sqlite3.connect(_sqlite_path(os.getenv("SQLITE_PATH", "apnr_local.db")))
+                return DatabaseConnection(conn, "sqlite")
+
+        if db_type == "sqlite":
+            conn = sqlite3.connect(_sqlite_path(os.getenv("SQLITE_PATH", "apnr_local.db")))
+            return DatabaseConnection(conn, "sqlite")
 
     # MySQL path
     host = os.getenv("MYSQL_HOST", os.getenv("APNR_DB_HOST", "127.0.0.1"))
@@ -183,6 +268,20 @@ def create_connection():
     return DatabaseConnection(conn, "mysql")
 
 
+def _sqlite_path(path_env):
+    """Resolve the SQLite database file path, creating parent dirs if needed.
+
+    On Render (where RENDER is set), uses /tmp which is always writable
+    and persists for the container's lifetime.
+    """
+    if os.getenv("RENDER"):
+        path = "/tmp/apnr_local.db"
+    else:
+        path = os.path.abspath(path_env)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    return path
+
+
 def initialize_schema():
     """Create the tables required by the current Flask application if absent."""
     connection = cursor = None
@@ -193,6 +292,8 @@ def initialize_schema():
 
         if db_type == "postgresql":
             _initialize_schema_postgresql(cursor)
+        elif db_type == "sqlite":
+            _initialize_schema_sqlite(cursor)
         else:
             _initialize_schema_mysql(cursor)
 
@@ -200,7 +301,10 @@ def initialize_schema():
         return True
     except (MySQLError, Exception) as error:
         if connection is not None:
-            connection.rollback()
+            try:
+                connection.rollback()
+            except Exception:
+                pass
         print(f"Schema initialization warning: {error}")
     finally:
         if cursor is not None:
@@ -260,6 +364,46 @@ def _initialize_schema_mysql(cursor):
         )
         if cursor.fetchone()[0] == 0:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+
+
+def _initialize_schema_sqlite(cursor):
+    """SQLite-specific schema creation and migration."""
+    statements = (
+        """CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username VARCHAR(80) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL,
+            role VARCHAR(20) NOT NULL DEFAULT 'Operator',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            is_first_login INTEGER NOT NULL DEFAULT 0,
+            failed_attempts SMALLINT NOT NULL DEFAULT 0,
+            locked_until TIMESTAMP NULL,
+            last_login_at TIMESTAMP NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plate_number VARCHAR(20) NOT NULL UNIQUE,
+            category VARCHAR(20) NOT NULL DEFAULT 'Visitor',
+            notes VARCHAR(500),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS detection_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plate_number VARCHAR(20) NOT NULL,
+            confidence DECIMAL(5, 2) NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'Visitor',
+            scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            event_type VARCHAR(10) NOT NULL DEFAULT 'Entry',
+            image_path VARCHAR(255),
+            alert_generated INTEGER NOT NULL DEFAULT 0,
+            operator_username VARCHAR(80)
+        )""",
+    )
+    for statement in statements:
+        cursor.execute(statement)
+
+    # SQLite uses INTEGER for BOOLEAN (0/1), which differs from MySQL/Postgres.
+    # All columns are created with appropriate types in the table definitions above.
 
 
 def _initialize_schema_postgresql(cursor):

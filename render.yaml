@@ -5,13 +5,11 @@ services:
     buildCommand: apt-get update && apt-get install -y tesseract-ocr && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
     healthCheckPath: /health/text
-    addons:
-      - apnr-db
     envVars:
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: FLASK_COOKIE_SECURE
-        value: "1"
+        value: "0"
       - key: FLASK_ENV
         value: production
       - key: TESSERACT_CMD
@@ -22,6 +20,8 @@ services:
         value: ChangeMe123456
       - key: FLASK_DEBUG
         value: "0"
+      - key: DATABASE_URL
+        value: sqlite:///apnr_local.db
 
 databases:
   - name: apnr-db

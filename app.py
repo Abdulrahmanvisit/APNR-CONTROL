@@ -2,6 +2,7 @@ import csv
 import io
 import logging
 import os
+import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -9,11 +10,11 @@ from functools import wraps
 import mysql.connector
 try:
     import pg8000
-    DB_ERRORS = (mysql.connector.Error, pg8000.Error)
-    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError, pg8000.IntegrityError)
+    DB_ERRORS = (mysql.connector.Error, pg8000.Error, sqlite3.Error)
+    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError, pg8000.IntegrityError, sqlite3.IntegrityError)
 except ImportError:
-    DB_ERRORS = (mysql.connector.Error,)
-    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError,)
+    DB_ERRORS = (mysql.connector.Error, sqlite3.Error)
+    DB_INTEGRITY_ERRORS = (mysql.connector.IntegrityError, sqlite3.IntegrityError)
 from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 from flask_limiter import Limiter
@@ -33,11 +34,21 @@ app = Flask(__name__)
 
 _secret_key = os.getenv("FLASK_SECRET_KEY")
 if not _secret_key:
-    logging.warning(
-        "FLASK_SECRET_KEY is not set. Sessions will not survive a server restart. "
-        "Set FLASK_SECRET_KEY in your environment or .env file "
-        "(generate with: openssl rand -hex 32)."
-    )
+    _secret_key_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret_key")
+    try:
+        if os.path.exists(_secret_key_file):
+            with open(_secret_key_file, "r") as f:
+                _secret_key = f.read().strip()
+        if not _secret_key:
+            import secrets
+            _secret_key = secrets.token_hex(32)
+            with open(_secret_key_file, "w") as f:
+                f.write(_secret_key)
+            os.chmod(_secret_key_file, 0o600)
+    except OSError:
+        _secret_key = None
+    if _secret_key:
+        logging.info("FLASK_SECRET_KEY not set; generated a persistent key. Set FLASK_SECRET_KEY for production.")
 
 app.config.update(
     SECRET_KEY=_secret_key or os.urandom(32),
