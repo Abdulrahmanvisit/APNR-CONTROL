@@ -44,10 +44,11 @@ class PgDictCursor:
 
 
 class SqliteDictCursor:
-    """Wrap a sqlite3 cursor to accept %s-style params and yield dict rows."""
+    """Wrap a sqlite3 cursor to accept %s-style params and optionally yield dict rows."""
 
-    def __init__(self, cursor):
+    def __init__(self, cursor, dictionary=True):
         self._cursor = cursor
+        self._dictionary = dictionary
 
     @property
     def rowcount(self):
@@ -65,17 +66,22 @@ class SqliteDictCursor:
         return self._cursor.execute(converted, params)
 
     def fetchall(self):
-        if self._cursor.description is None:
+        rows = self._cursor.fetchall()
+        if not rows or self._cursor.description is None:
             return []
+        if not self._dictionary:
+            return rows
         columns = [col[0] for col in self._cursor.description]
-        return [dict(zip(columns, row)) for row in self._cursor.fetchall()]
+        return [dict(zip(columns, row)) for row in rows]
 
     def fetchone(self):
-        if self._cursor.description is None:
-            return None
-        columns = [col[0] for col in self._cursor.description]
         row = self._cursor.fetchone()
-        return dict(zip(columns, row)) if row else None
+        if row is None or self._cursor.description is None:
+            return None
+        if not self._dictionary:
+            return row
+        columns = [col[0] for col in self._cursor.description]
+        return dict(zip(columns, row))
 
     def close(self):
         self._cursor.close()
@@ -111,8 +117,7 @@ class DatabaseConnection:
             return PgDictCursor(cursor) if dictionary else cursor
         if self._db_type == "sqlite":
             cursor = self._conn.cursor()
-            # Always wrap SQLite cursors to convert %s params to ? style
-            return SqliteDictCursor(cursor)
+            return SqliteDictCursor(cursor, dictionary=dictionary)
         return self._conn.cursor(dictionary=dictionary)
 
     def commit(self):
