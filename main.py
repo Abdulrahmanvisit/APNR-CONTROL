@@ -1,9 +1,13 @@
 import os
 import sqlite3
+import time
 from urllib.parse import urlparse
 
 import mysql.connector
 from mysql.connector import Error as MySQLError
+
+MAX_DB_RETRIES = 3
+DB_RETRY_DELAY = 1
 
 
 class PgDictCursor:
@@ -204,13 +208,32 @@ def create_connection():
         kwargs, db_type = _connection_kwargs_from_database_url(database_url)
         if db_type == "postgresql":
             import pg8000
-            conn = pg8000.connect(**kwargs)
-            return DatabaseConnection(conn, "postgresql")
+            try:
+                conn = pg8000.connect(**kwargs)
+                return DatabaseConnection(conn, "postgresql")
+            except Exception:
+                import logging
+                logging.warning("PostgreSQL connection failed; falling back to SQLite.")
+                conn = sqlite3.connect(_sqlite_path("apnr_local.db"))
+                return DatabaseConnection(conn, "sqlite")
         if db_type == "sqlite":
             conn = sqlite3.connect(_sqlite_path(kwargs.get("path", "apnr_local.db")))
             return DatabaseConnection(conn, "sqlite")
-        conn = mysql.connector.connect(**kwargs)
-        return DatabaseConnection(conn, "mysql")
+        last_error = None
+        for attempt in range(MAX_DB_RETRIES):
+            try:
+                conn = mysql.connector.connect(**kwargs)
+                conn.ping(reconnect=True, attempts=3, delay=1)
+                return DatabaseConnection(conn, "mysql")
+            except MySQLError as error:
+                last_error = error
+                if attempt < MAX_DB_RETRIES - 1:
+                    time.sleep(DB_RETRY_DELAY * (attempt + 1))
+        # All retries exhausted — fall back to SQLite
+        import logging
+        logging.warning(f"MySQL (DATABASE_URL) connection failed after {MAX_DB_RETRIES} attempts: {last_error}. Falling back to SQLite.")
+        conn = sqlite3.connect(_sqlite_path("apnr_local.db"))
+        return DatabaseConnection(conn, "sqlite")
 
     # Detect PostgreSQL vs MySQL vs SQLite from env
     db_type = os.getenv("DB_TYPE", "mysql")
@@ -263,14 +286,29 @@ def create_connection():
     except ValueError as error:
         raise ValueError("MYSQL_PORT (or APNR_DB_PORT) must be an integer") from error
 
-    conn = mysql.connector.connect(
-        host=host,
-        user=user,
-        password=password,
-        database=database,
-        port=port,
-    )
-    return DatabaseConnection(conn, "mysql")
+    last_error = None
+    for attempt in range(MAX_DB_RETRIES):
+        try:
+            conn = mysql.connector.connect(
+                host=host,
+                user=user,
+                password=password,
+                database=database,
+                port=port,
+                connection_timeout=10,
+            )
+            conn.ping(reconnect=True, attempts=3, delay=1)
+            return DatabaseConnection(conn, "mysql")
+        except MySQLError as error:
+            last_error = error
+            if attempt < MAX_DB_RETRIES - 1:
+                time.sleep(DB_RETRY_DELAY * (attempt + 1))
+
+    # All retries exhausted — fall back to SQLite
+    import logging
+    logging.warning(f"MySQL connection failed after {MAX_DB_RETRIES} attempts: {last_error}. Falling back to SQLite.")
+    conn = sqlite3.connect(_sqlite_path(os.getenv("SQLITE_PATH", "apnr_local.db")))
+    return DatabaseConnection(conn, "sqlite")
 
 
 def _sqlite_path(path_env):

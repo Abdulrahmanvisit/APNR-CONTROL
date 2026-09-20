@@ -54,10 +54,11 @@ app.config.update(
     SECRET_KEY=_secret_key or os.urandom(32),
     MAX_CONTENT_LENGTH=5 * 1024 * 1024,
     UPLOAD_FOLDER=os.path.join(app.root_path, "static", "uploads"),
-    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=365),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("FLASK_COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_MAX_AGE=365 * 24 * 60 * 60,
     SESSION_REFRESH_EACH_REQUEST=True,
     PREFERRED_URL_SCHEME="https" if os.getenv("FLASK_COOKIE_SECURE", "0") == "1" else "http",
 )
@@ -239,6 +240,36 @@ def health_text():
     """Human-readable health check (for Render health check path)."""
     data = health_check()
     return ("OK" if data["status"] == "ok" else "ERROR"), 200
+
+
+@app.route("/api/v1/health")
+def api_health():
+    """Lightweight JSON health check with a database ping (SELECT 1) for keep-alive services.
+
+    Designed to be called every 5-10 minutes by UptimeRobot, Cron-job.org, or a
+    similar uptime monitor to keep the Render Free-tier web service awake and
+    database connections warm.
+    """
+    import time
+    start = time.time()
+    from main import create_connection
+    db_status = "unavailable"
+    try:
+        conn = create_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT 1 AS alive")
+        result = cursor.fetchone()
+        db_status = "connected" if result and result.get("alive") == 1 else "error"
+        cursor.close()
+        conn.close()
+    except Exception as error:
+        db_status = f"error: {error}"
+    elapsed_ms = int((time.time() - start) * 1000)
+    return {
+        "status": "ok" if db_status == "connected" else "degraded",
+        "database": db_status,
+        "response_time_ms": elapsed_ms,
+    }, 200 if db_status == "connected" else 503
 
 
 @app.after_request
