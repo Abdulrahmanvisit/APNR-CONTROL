@@ -223,6 +223,13 @@ def health_check():
     tesseract_cmd = os.getenv("TESSERACT_CMD", "not set")
     tesseract_available = False
     runtime_can_install = False
+    rapidocr_available = False
+    rapidocr_error = None
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # noqa: F401
+        rapidocr_available = True
+    except Exception as error:
+        rapidocr_error = f"{type(error).__name__}: {error}"
     try:
         import shutil
         import subprocess
@@ -271,6 +278,8 @@ def health_check():
         "secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
         "tesseract_cmd": tesseract_cmd,
         "tesseract_available": tesseract_available,
+        "rapidocr_available": rapidocr_available,
+        "rapidocr_error": rapidocr_error,
         "runtime_can_install": runtime_can_install,
         "admin_credentials": (
             f"username={os.getenv('ADMIN_USERNAME', 'admin')} "
