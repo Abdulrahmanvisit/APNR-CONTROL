@@ -116,18 +116,62 @@ def _ocr_candidates(image, crop):
     ) if readings else None
 
 
+def _ocr_with_rapidocr(image_path):
+    """Fallback OCR using rapidocr-onnxruntime (pure Python, no system Tesseract).
+
+    Returns a (confidence, length, text) tuple like the Tesseract path,
+    or None when the engine is unavailable or finds no plate text.
+    """
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        return None
+    image = cv2.imread(image_path)
+    if image is None:
+        return None
+    engine = RapidOCR()
+    result, _ = engine(image)
+    if not result:
+        return None
+    readings = []
+    for _box, text, confidence in result:
+        clean = clean_plate_text(text)
+        if 5 <= len(clean) <= 12 and any(character.isdigit() for character in clean):
+            readings.append((float(confidence), len(clean), clean))
+    if not readings:
+        return None
+    return max(
+        readings,
+        key=lambda reading: (
+            sum(character.isdigit() for character in reading[2]),
+            reading[0],
+            reading[1],
+        ),
+    )
+
+
 def process_license_plate(image_path):
     """Run robust image preprocessing and Tesseract OCR on an image file."""
     if not os.path.isfile(image_path):
         return {"success": False, "plate_number": "", "confidence": 0.0, "error": "Image file not found."}
-    if cv2 is None or pytesseract is None:
+    if cv2 is None:
         return {
             "success": False,
             "plate_number": "OCR_ERROR",
             "confidence": 0.0,
-            "error": "OCR dependencies are unavailable. Install opencv-python and pytesseract.",
+            "error": "OCR dependencies are unavailable. Install opencv-python.",
         }
     if not _configure_tesseract():
+        # Self-contained fallback for hosts without a system Tesseract binary
+        # (e.g. Render Free tier where the build step did not install tesseract-ocr).
+        fallback = _ocr_with_rapidocr(image_path)
+        if fallback is not None:
+            return {
+                "success": True,
+                "plate_number": fallback[2],
+                "confidence": min(99.0, round(fallback[0], 1)),
+                "error": None,
+            }
         return {
             "success": False,
             "plate_number": "OCR_ERROR",
