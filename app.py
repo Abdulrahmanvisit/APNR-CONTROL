@@ -220,13 +220,38 @@ def health_check():
     except Exception as error:
         db_status = f"error: {error}"
 
+    tesseract_cmd = os.getenv("TESSERACT_CMD", "not set")
+    tesseract_available = False
+    try:
+        import shutil
+        import subprocess
+        candidates = [
+            os.getenv("TESSERACT_CMD"),
+            "/usr/bin/tesseract",
+            shutil.which("tesseract"),
+        ]
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                probe = subprocess.run(
+                    [candidate, "--version"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if probe.returncode == 0:
+                    tesseract_available = True
+                    tesseract_cmd = candidate
+                    break
+    except Exception:
+        tesseract_available = False
+
     return {
         "status": "ok" if db_status == "connected" else "error",
         "database": db_status,
         "users_count": user_count,
         "admin_exists": admin_exists,
         "secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
-        "tesseract_cmd": os.getenv("TESSERACT_CMD", "not set"),
+        "tesseract_cmd": tesseract_cmd,
+        "tesseract_available": tesseract_available,
         "admin_credentials": (
             f"username={os.getenv('ADMIN_USERNAME', 'admin')} "
             f"password={os.getenv('ADMIN_PASSWORD', 'ChangeMe123456')}"

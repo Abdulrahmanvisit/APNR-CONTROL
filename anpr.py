@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 
 try:
     import cv2
@@ -13,6 +14,9 @@ except ImportError:
 
 TESSERACT_CANDIDATES = (
     os.getenv("TESSERACT_CMD"),
+    "/usr/bin/tesseract",
+    "/usr/local/bin/tesseract",
+    shutil.which("tesseract"),
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
 )
