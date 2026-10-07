@@ -228,8 +228,19 @@ def health_check():
         candidates = [
             os.getenv("TESSERACT_CMD"),
             "/usr/bin/tesseract",
+            "/usr/local/bin/tesseract",
             shutil.which("tesseract"),
         ]
+        # Broaden the search: scan common system paths for any tesseract binary
+        if not any(candidates):
+            search_roots = ["/usr", "/opt", "/app"]
+            for root in search_roots:
+                for dirpath, dirnames, filenames in os.walk(root):
+                    if "tesseract" in filenames:
+                        candidates.append(os.path.join(dirpath, "tesseract"))
+                        break
+                    if dirpath.count(os.sep) > 6:
+                        dirnames[:] = []
         for candidate in candidates:
             if candidate and os.path.isfile(candidate):
                 probe = subprocess.run(
