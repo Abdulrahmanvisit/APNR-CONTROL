@@ -222,9 +222,17 @@ def health_check():
 
     tesseract_cmd = os.getenv("TESSERACT_CMD", "not set")
     tesseract_available = False
+    runtime_can_install = False
     try:
         import shutil
         import subprocess
+        # Report whether the runtime can self-install system packages
+        runtime_can_install = (
+            os.name == "posix"
+            and os.path.isfile("/usr/bin/apt-get")
+            and hasattr(os, "getuid")
+            and os.getuid() == 0
+        )
         candidates = [
             os.getenv("TESSERACT_CMD"),
             "/usr/bin/tesseract",
@@ -263,6 +271,7 @@ def health_check():
         "secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
         "tesseract_cmd": tesseract_cmd,
         "tesseract_available": tesseract_available,
+        "runtime_can_install": runtime_can_install,
         "admin_credentials": (
             f"username={os.getenv('ADMIN_USERNAME', 'admin')} "
             f"password={os.getenv('ADMIN_PASSWORD', 'ChangeMe123456')}"
